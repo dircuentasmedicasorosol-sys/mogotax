@@ -1084,7 +1084,7 @@
       const doc = construirDocumentoPDF(false);
       const placa = (document.getElementById('infoPlaca').value || 'S_N').toUpperCase();
       const fecha = document.getElementById('infoFecha').value || 'FECHA';
-      const nombre = `Inspeccion_Mogotax_${placa}_${fecha}.pdf`;
+      const nombre = `Inspeccion Orosol Movil (${placa}).pdf`;
 
       const esNativo = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
       if(!esNativo){
