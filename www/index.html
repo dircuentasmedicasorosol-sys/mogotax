@@ -23,7 +23,7 @@
 <body class="min-h-screen flex flex-col justify-between">
 
   <!-- Encabezado Institucional -->
-  <header class="bg-slate-900 text-white border-b-4 border-amber-500 shadow-lg py-4 px-6">
+  <header id="appHeader" class="bg-slate-900 text-white border-b-4 border-amber-500 shadow-lg py-4 px-6">
     <div class="max-w-6xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-3">
       <div class="flex items-center gap-3">
         <div class="bg-white p-1.5 rounded-xl shadow-md">
@@ -48,6 +48,41 @@
   <!-- Contenido Principal -->
   <main class="max-w-6xl mx-auto w-full p-4 sm:p-6 flex-grow">
 
+    <!-- PANTALLA DE INICIO -->
+    <div id="pantallaInicio" class="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 text-center space-y-6">
+      <div>
+        <div class="bg-slate-900 text-white inline-block p-3 rounded-2xl shadow-md mb-3">
+          <span class="font-extrabold px-3 py-1 text-lg">MOGOTAX</span>
+        </div>
+        <h2 class="text-xl font-extrabold text-slate-800">Inspección de Vehículo</h2>
+        <p class="text-xs text-slate-500 mt-1">Formato Oficial de Inspección Preoperacional</p>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-md mx-auto">
+        <button onclick="iniciarInspeccion()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 px-4 rounded-xl shadow-lg transition-all flex flex-col items-center gap-2">
+          <i class="fa-solid fa-clipboard-list text-2xl"></i>
+          <span class="text-sm">INICIAR INSPECCIÓN</span>
+        </button>
+        <button onclick="verHistorial()" class="bg-sky-600 hover:bg-sky-500 text-white font-bold py-4 px-4 rounded-xl shadow-lg transition-all flex flex-col items-center gap-2">
+          <i class="fa-solid fa-clock-rotate-left text-2xl"></i>
+          <span class="text-sm">VER HISTORIAL</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- PANTALLA DE HISTORIAL -->
+    <div id="pantallaHistorial" class="hidden bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+      <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+        <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+          <i class="fa-solid fa-clock-rotate-left text-sky-600"></i> Historial de Inspecciones
+        </h2>
+        <div class="flex gap-2">
+          <button onclick="borrarHistorial()" class="text-xs text-rose-600 font-semibold hover:underline"><i class="fa-solid fa-trash"></i> Borrar todo</button>
+          <button onclick="volverInicio()" class="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-3 py-1.5 rounded-lg">Volver</button>
+        </div>
+      </div>
+      <div id="listaHistorial" class="space-y-2 text-xs"></div>
+    </div>
+
     <!-- Modal Previsualización PDF -->
     <div id="pdfModal" class="hidden fixed inset-0 bg-slate-950/80 z-50 flex items-center justify-center p-4">
       <div class="bg-white w-full max-w-4xl h-[85vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
@@ -66,6 +101,9 @@
         </div>
       </div>
     </div>
+
+    <!-- WIZARD: flujo normal de inspección -->
+    <div id="wizard" class="hidden">
 
     <!-- Criterios de Evaluación -->
     <div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 mb-6 text-xs text-slate-700 flex items-start gap-2">
@@ -207,6 +245,29 @@
       </div>
     </div>
 
+    </div><!-- /wizard -->
+
+    <!-- AVISO POST-PDF -->
+    <div id="modalPostPdf" class="hidden fixed inset-0 bg-slate-950/80 z-50 flex items-center justify-center p-4">
+      <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 text-center space-y-4">
+        <div class="bg-emerald-100 text-emerald-700 w-14 h-14 rounded-full flex items-center justify-center mx-auto text-2xl">
+          <i class="fa-solid fa-check"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-slate-800 text-base">PDF generado</h3>
+          <p class="text-xs text-slate-500 mt-1" id="postPdfDetalle"></p>
+        </div>
+        <div class="grid grid-cols-1 gap-2">
+          <button onclick="nuevaInspeccion()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-xl text-sm">
+            <i class="fa-solid fa-plus me-1"></i> Generar nueva inspección
+          </button>
+          <button onclick="volverInicioDesdeModal()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3 rounded-xl text-sm">
+            <i class="fa-solid fa-house me-1"></i> Salir al menú principal
+          </button>
+        </div>
+      </div>
+    </div>
+
   </main>
 
   <script>
@@ -298,6 +359,7 @@
       renderPhotoZones();
       setupCanvas('Operador');
       setupCanvas('Inspector');
+      mostrarPantalla('inicio');
     });
 
     function renderChecklist() {
@@ -861,6 +923,121 @@
       return doc;
     }
 
+    const HIST_KEY = 'mogotax_historial';
+
+    function mostrarPantalla(nombre) {
+      document.getElementById('pantallaInicio').classList.add('hidden');
+      document.getElementById('pantallaHistorial').classList.add('hidden');
+      document.getElementById('wizard').classList.add('hidden');
+      const header = document.getElementById('appHeader');
+      if(nombre === 'wizard') {
+        document.getElementById('wizard').classList.remove('hidden');
+        header.classList.remove('hidden');
+      } else {
+        header.classList.add('hidden');
+        document.getElementById(nombre === 'inicio' ? 'pantallaInicio' : 'pantallaHistorial').classList.remove('hidden');
+      }
+    }
+
+    function iniciarInspeccion() {
+      reiniciarFormulario();
+      mostrarPantalla('wizard');
+      irPaso(1);
+    }
+
+    function verHistorial() {
+      renderHistorial();
+      mostrarPantalla('historial');
+    }
+
+    function volverInicio() { mostrarPantalla('inicio'); }
+
+    function reiniciarFormulario() {
+      document.querySelectorAll('#wizard input[type="text"], #wizard input[type="number"], #wizard textarea').forEach(el => el.value = '');
+      const ahora = new Date();
+      document.getElementById('infoFecha').valueAsDate = ahora;
+      document.getElementById('infoHora').value = `${String(ahora.getHours()).padStart(2,'0')}:${String(ahora.getMinutes()).padStart(2,'0')}`;
+      for(const k in fotosGuardadas) delete fotosGuardadas[k];
+      renderChecklist();
+      renderPhotoZones();
+      limpiarFirma('Operador');
+      limpiarFirma('Inspector');
+    }
+
+    function leerHistorial() {
+      try { return JSON.parse(localStorage.getItem(HIST_KEY)) || []; } catch(e) { return []; }
+    }
+
+    function guardarRegistro(placa) {
+      const g = id => (document.getElementById(id)?.value || '');
+      const reg = {
+        id: Date.now(),
+        placa: placa,
+        conductor: g('infoConductor'),
+        doc: g('infoDoc'),
+        interno: g('infoInterno'),
+        km: g('infoKm'),
+        fecha: g('infoFecha'),
+        hora: g('infoHora'),
+        inspector: g('infoInspector'),
+        obs: g('txtObservaciones'),
+        comp: g('txtCompromisos'),
+        fotos: Object.keys(fotosGuardadas).length
+      };
+      const lista = leerHistorial();
+      lista.unshift(reg);
+      try { localStorage.setItem(HIST_KEY, JSON.stringify(lista)); } catch(e) {}
+    }
+
+    function renderHistorial() {
+      const cont = document.getElementById('listaHistorial');
+      const lista = leerHistorial();
+      if(lista.length === 0) {
+        cont.innerHTML = '<p class="text-slate-400 text-center py-8">Aún no hay inspecciones guardadas.</p>';
+        return;
+      }
+      cont.innerHTML = lista.map(r => `
+        <div class="border border-slate-200 rounded-xl p-3 bg-slate-50 flex justify-between items-start gap-2">
+          <div>
+            <p class="font-bold text-slate-800 text-sm"><i class="fa-solid fa-car me-1 text-amber-500"></i>${r.placa || 'SIN PLACA'}</p>
+            <p class="text-slate-600 mt-0.5">${r.fecha || ''} ${r.hora || ''} · Conductor: ${r.conductor || '—'}</p>
+            <p class="text-slate-500 mt-0.5">Inspector: ${r.inspector || '—'} · Fotos: ${r.fotos || 0}</p>
+          </div>
+          <button onclick="borrarRegistro(${r.id})" class="text-rose-600 hover:underline text-xs"><i class="fa-solid fa-trash"></i></button>
+        </div>`).join('');
+    }
+
+    function borrarRegistro(id) {
+      const lista = leerHistorial().filter(r => r.id !== id);
+      try { localStorage.setItem(HIST_KEY, JSON.stringify(lista)); } catch(e) {}
+      renderHistorial();
+    }
+
+    function borrarHistorial() {
+      if(confirm('¿Borrar todo el historial de inspecciones?')) {
+        try { localStorage.setItem(HIST_KEY, JSON.stringify([])); } catch(e) {}
+        renderHistorial();
+      }
+    }
+
+    function registroExitoso(placa) {
+      guardarRegistro(placa);
+      document.getElementById('postPdfDetalle').textContent = 'Inspección de la placa ' + placa + ' guardada en el historial.';
+      document.getElementById('modalPostPdf').classList.remove('hidden');
+    }
+
+    function nuevaInspeccion() {
+      document.getElementById('modalPostPdf').classList.add('hidden');
+      reiniciarFormulario();
+      irPaso(1);
+    }
+
+    function volverInicioDesdeModal() {
+      document.getElementById('modalPostPdf').classList.add('hidden');
+      reiniciarFormulario();
+      mostrarPantalla('inicio');
+    }
+
     async function generarPDFMultiPagina() {
       if(!estadoFirmas.Operador || !estadoFirmas.Inspector) {
         alert('Por favor capture ambas firmas (Conductor e Inspector) antes de generar el PDF.');
@@ -875,6 +1052,7 @@
       const esNativo = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
       if(!esNativo){
         doc.save(nombre);
+        registroExitoso(placa);
         return;
       }
 
@@ -899,6 +1077,7 @@
         }catch(e){
           alert('PDF guardado en Documentos: ' + nombre);
         }
+        registroExitoso(placa);
       }catch(err){
         alert('No se pudo guardar el PDF: ' + ((err && err.message) ? err.message : err));
       }
