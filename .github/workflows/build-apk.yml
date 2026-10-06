@@ -32,6 +32,17 @@ jobs:
       - name: Sync web assets
         run: npx cap sync android
 
+      - name: Apply custom app icon
+        run: |
+          rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            mkdir -p android/app/src/main/res/mipmap-$d
+            rm -f android/app/src/main/res/mipmap-$d/ic_launcher.* android/app/src/main/res/mipmap-$d/ic_launcher_round.*
+            cp resources/icon.png android/app/src/main/res/mipmap-$d/ic_launcher.png
+            cp resources/icon.png android/app/src/main/res/mipmap-$d/ic_launcher_round.png
+          done
+
       - name: Build debug APK
         run: |
           cd android
