@@ -350,10 +350,16 @@
             <i class="fa-solid fa-camera text-xl mb-1"></i>
             <span class="text-[10px]">Sin foto</span>
           </div>
-          <label class="block text-center cursor-pointer bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-semibold py-1.5 px-3 rounded-lg transition-colors">
-            <i class="fa-solid fa-upload me-1"></i> Cargar
-            <input type="file" accept="image/*" class="hidden" onchange="cargarFotoZona(event, ${idx})">
-          </label>
+          <div class="flex gap-2">
+            <label class="flex-1 text-center cursor-pointer bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-semibold py-1.5 px-2 rounded-lg transition-colors">
+              <i class="fa-solid fa-camera me-1"></i> Tomar foto
+              <input type="file" accept="image/*" capture="environment" class="hidden" onchange="cargarFotoZona(event, ${idx})">
+            </label>
+            <label class="flex-1 text-center cursor-pointer bg-slate-200 hover:bg-slate-300 text-slate-700 text-[11px] font-semibold py-1.5 px-2 rounded-lg transition-colors">
+              <i class="fa-solid fa-image me-1"></i> Galería
+              <input type="file" accept="image/*" class="hidden" onchange="cargarFotoZona(event, ${idx})">
+            </label>
+          </div>
         `;
         grid.appendChild(box);
       });
