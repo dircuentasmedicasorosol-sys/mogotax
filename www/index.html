@@ -1121,6 +1121,14 @@
       } catch(e) {}
     }
 
+    async function escribirPdfNativo(nombre, b64) {
+      const Filesystem = Capacitor.Plugins.Filesystem || Capacitor.registerPlugin('Filesystem');
+      // Si ya existe un archivo con ese nombre, se reemplaza (el plugin falla al sobrescribir).
+      try { await Filesystem.deleteFile({ path: nombre, directory: 'DOCUMENTS' }); } catch(e) {}
+      const escrito = await Filesystem.writeFile({ path: nombre, data: b64, directory: 'DOCUMENTS', recursive: true });
+      return (escrito && escrito.uri) ? escrito.uri : nombre;
+    }
+
     async function verPdfHistorial(id) {
       const rec = await leerPdfHistorial(id);
       if(!rec || !rec.b64) {
@@ -1130,9 +1138,7 @@
       const esNativo = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
       if(esNativo) {
         try {
-          const Filesystem = Capacitor.Plugins.Filesystem || Capacitor.registerPlugin('Filesystem');
-          const escrito = await Filesystem.writeFile({ path: rec.nombre, data: rec.b64, directory: 'DOCUMENTS', recursive: true });
-          const uri = (escrito && escrito.uri) ? escrito.uri : rec.nombre;
+          const uri = await escribirPdfNativo(rec.nombre, rec.b64);
           let abierto = false;
           try {
             const FileOpener = Capacitor.Plugins.FileOpener || Capacitor.registerPlugin('FileOpener');
@@ -1193,9 +1199,7 @@
         const esNativo = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
         if(esNativo) {
           try {
-            const Filesystem = Capacitor.Plugins.Filesystem || Capacitor.registerPlugin('Filesystem');
-            const escrito = await Filesystem.writeFile({ path: nombre, data: resultado.b64, directory: 'DOCUMENTS', recursive: true });
-            const uri = (escrito && escrito.uri) ? escrito.uri : nombre;
+            const uri = await escribirPdfNativo(nombre, resultado.b64);
             let abierto = false;
             try {
               const FileOpener = Capacitor.Plugins.FileOpener || Capacitor.registerPlugin('FileOpener');
