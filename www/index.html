@@ -903,22 +903,25 @@
         }
       }
 
-      // OBSERVACIONES
-      rect(18.50,428.83,569.60,11.40,AZUL);
-      centered('OBSERVACIONES',18.50,436.75,569.60,8.88,'bold');
-      rect(18.50,440.23,569.60,122.77,null,true);
+      // OBSERVACIONES Y COMPROMISOS: dos secciones del mismo tamaño
+      const secTop = 428.83, secFin = 643.00, banda = 11.40;
+      const cajaH = (secFin - secTop - banda*2) / 2;
+      const yObs = secTop, yComp = secTop + banda + cajaH;
+
+      rect(X,yObs,W,banda,AZUL);
+      centered('OBSERVACIONES',X,yObs+7.92,W,8.88,'bold');
+      rect(X,yObs+banda,W,cajaH,null,true);
       if(obs){
         font(9.24,'normal');
-        doc.text(doc.splitTextToSize(obs,560).slice(0,11),24,454,{lineHeightFactor:1.05});
+        doc.text(doc.splitTextToSize(obs,560).slice(0,9),24,yObs+banda+13.77,{lineHeightFactor:1.05});
       }
 
-      // COMPROMISOS
-      rect(18.50,563.00,569.60,12.00,AZUL);
-      centered('COMPROMISOS',18.50,571.50,569.60,8.88,'bold');
-      rect(18.50,575.00,569.60,68.00,null,true);
+      rect(X,yComp,W,banda,AZUL);
+      centered('COMPROMISOS',X,yComp+7.92,W,8.88,'bold');
+      rect(X,yComp+banda,W,cajaH,null,true);
       if(comp){
         font(9.24,'normal');
-        doc.text(doc.splitTextToSize(comp,560).slice(0,5),24,588,{lineHeightFactor:1.05});
+        doc.text(doc.splitTextToSize(comp,560).slice(0,9),24,yComp+banda+13.77,{lineHeightFactor:1.05});
       }
 
       // FIRMAS
