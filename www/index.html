@@ -9,6 +9,8 @@
   <script src="vendor/js/tailwind.js"></script>
   <!-- jsPDF (local, offline) -->
   <script src="vendor/js/jspdf.umd.min.js"></script>
+  <!-- pdf-lib para unir PDFs (local, offline) -->
+  <script src="vendor/js/pdf-lib.min.js"></script>
   <!-- FontAwesome Icons (local, offline) -->
   <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
 
@@ -71,6 +73,7 @@
           <i class="fa-solid fa-clock-rotate-left text-sky-600"></i> Historial de Inspecciones
         </h2>
         <div class="flex gap-2">
+          <button id="btnUnirHistorial" onclick="descargarHistorialCompleto(this)" class="text-xs bg-sky-600 hover:bg-sky-500 text-white font-bold px-3 py-1.5 rounded-lg whitespace-nowrap"><i class="fa-solid fa-file-arrow-down"></i> Descargar todo en un PDF</button>
           <button onclick="borrarHistorial()" class="text-xs text-rose-600 font-semibold hover:underline"><i class="fa-solid fa-trash"></i> Borrar todo</button>
           <button onclick="volverInicio()" class="text-xs bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold px-3 py-1.5 rounded-lg">Volver</button>
         </div>
@@ -1151,6 +1154,77 @@
         document.querySelector('#pdfModal h3').textContent = rec.nombre;
         document.getElementById('pdfViewer').src = url;
         document.getElementById('pdfModal').classList.remove('hidden');
+      }
+    }
+
+    async function unirPdfsHistorial(avance) {
+      const lista = leerHistorial().filter(r => r.pdf);
+      const originales = [];
+      for(const r of lista) {
+        const rec = await leerPdfHistorial(r.id);
+        if(rec && rec.b64) originales.push(rec);
+      }
+      if(originales.length === 0) return null;
+      const unido = await PDFLib.PDFDocument.create();
+      for(let i = 0; i < originales.length; i++) {
+        if(avance) avance(i+1, originales.length);
+        const bytes = Uint8Array.from(atob(originales[i].b64), c => c.charCodeAt(0));
+        const src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+        const paginas = await unido.copyPages(src, src.getPageIndices());
+        paginas.forEach(p => unido.addPage(p));
+      }
+      const salida = await unido.save();
+      let bin = '';
+      const trozo = 0x8000;
+      for(let i = 0; i < salida.length; i += trozo) bin += String.fromCharCode.apply(null, salida.subarray(i, i+trozo));
+      return { n: originales.length, b64: btoa(bin) };
+    }
+
+    async function descargarHistorialCompleto(btn) {
+      if(!window.PDFLib) { alert('El módulo para unir PDF no está disponible en esta versión.'); return; }
+      const htmlOriginal = btn ? btn.innerHTML : '';
+      if(btn) btn.disabled = true;
+      try {
+        const resultado = await unirPdfsHistorial((i, total) => {
+          if(btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Uniendo ' + i + ' de ' + total + '…';
+        });
+        if(!resultado) { alert('No hay PDF guardados en el historial de este dispositivo.'); return; }
+        const nombre = 'Historial Orosol (' + resultado.n + ' inspecciones).pdf';
+        const esNativo = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+        if(esNativo) {
+          try {
+            const Filesystem = Capacitor.Plugins.Filesystem || Capacitor.registerPlugin('Filesystem');
+            const escrito = await Filesystem.writeFile({ path: nombre, data: resultado.b64, directory: 'DOCUMENTS', recursive: true });
+            const uri = (escrito && escrito.uri) ? escrito.uri : nombre;
+            let abierto = false;
+            try {
+              const FileOpener = Capacitor.Plugins.FileOpener || Capacitor.registerPlugin('FileOpener');
+              await FileOpener.open({ filePath: uri, contentType: 'application/pdf' });
+              abierto = true;
+            } catch(e) { abierto = false; }
+            if(!abierto) {
+              const Share = Capacitor.Plugins.Share || Capacitor.registerPlugin('Share');
+              await Share.share({ title: 'Historial OROSOL', text: nombre, url: uri, dialogTitle: 'Abrir o compartir PDF' });
+            }
+          } catch(e) {
+            alert('No se pudo guardar el PDF unido: ' + ((e && e.message) ? e.message : e));
+          }
+        } else {
+          const bin = atob(resultado.b64);
+          const arr = new Uint8Array(bin.length);
+          for(let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }));
+          a.download = nombre;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        }
+      } catch(e) {
+        alert('No se pudo unir el historial: ' + ((e && e.message) ? e.message : e));
+      } finally {
+        if(btn) { btn.disabled = false; btn.innerHTML = htmlOriginal; }
       }
     }
 
