@@ -1005,7 +1005,7 @@
       try { return JSON.parse(localStorage.getItem(HIST_KEY)) || []; } catch(e) { return []; }
     }
 
-    function guardarRegistro(placa) {
+    function guardarRegistro(placa, nombrePdf) {
       const g = id => (document.getElementById(id)?.value || '');
       const reg = {
         id: Date.now(),
@@ -1019,11 +1019,13 @@
         inspector: g('infoInspector'),
         obs: g('txtObservaciones'),
         comp: g('txtCompromisos'),
-        fotos: Object.keys(fotosGuardadas).length
+        fotos: Object.keys(fotosGuardadas).length,
+        pdf: nombrePdf || ''
       };
       const lista = leerHistorial();
       lista.unshift(reg);
       try { localStorage.setItem(HIST_KEY, JSON.stringify(lista)); } catch(e) {}
+      return reg.id;
     }
 
     function renderHistorial() {
@@ -1040,25 +1042,119 @@
             <p class="text-slate-600 mt-0.5">${r.fecha || ''} ${r.hora || ''} · Conductor: ${r.conductor || '—'}</p>
             <p class="text-slate-500 mt-0.5">Inspector: ${r.inspector || '—'} · Fotos: ${r.fotos || 0}</p>
           </div>
-          <button onclick="borrarRegistro(${r.id})" class="text-rose-600 hover:underline text-xs"><i class="fa-solid fa-trash"></i></button>
+          <div class="flex items-center gap-3 shrink-0">
+            <button onclick="verPdfHistorial(${r.id})" class="text-sky-600 hover:underline text-xs font-semibold"><i class="fa-solid fa-file-pdf"></i> Ver PDF</button>
+            <button onclick="borrarRegistro(${r.id})" class="text-rose-600 hover:underline text-xs"><i class="fa-solid fa-trash"></i></button>
+          </div>
         </div>`).join('');
+    }
+
+    function abrirDbPdf() {
+      return new Promise((res, rej) => {
+        const req = indexedDB.open('mogotax_pdf', 1);
+        req.onupgradeneeded = () => { req.result.createObjectStore('pdfs', { keyPath: 'id' }); };
+        req.onsuccess = () => res(req.result);
+        req.onerror = () => rej(req.error);
+      });
+    }
+
+    async function guardarPdfHistorial(id, nombre, b64) {
+      try {
+        const db = await abrirDbPdf();
+        await new Promise((res, rej) => {
+          const tx = db.transaction('pdfs', 'readwrite');
+          tx.objectStore('pdfs').put({ id: id, nombre: nombre, b64: b64 });
+          tx.oncomplete = res;
+          tx.onerror = () => rej(tx.error);
+        });
+        db.close();
+      } catch(e) {}
+    }
+
+    async function leerPdfHistorial(id) {
+      try {
+        const db = await abrirDbPdf();
+        const rec = await new Promise((res, rej) => {
+          const tx = db.transaction('pdfs', 'readonly');
+          const r = tx.objectStore('pdfs').get(id);
+          r.onsuccess = () => res(r.result);
+          r.onerror = () => rej(r.error);
+        });
+        db.close();
+        return rec || null;
+      } catch(e) { return null; }
+    }
+
+    async function borrarPdfHistorial(id) {
+      try {
+        const db = await abrirDbPdf();
+        await new Promise((res, rej) => {
+          const tx = db.transaction('pdfs', 'readwrite');
+          tx.objectStore('pdfs').delete(id);
+          tx.oncomplete = res;
+          tx.onerror = () => rej(tx.error);
+        });
+        db.close();
+      } catch(e) {}
+    }
+
+    async function limpiarPdfsHistorial() {
+      try {
+        const db = await abrirDbPdf();
+        await new Promise((res, rej) => {
+          const tx = db.transaction('pdfs', 'readwrite');
+          tx.objectStore('pdfs').clear();
+          tx.oncomplete = res;
+          tx.onerror = () => rej(tx.error);
+        });
+        db.close();
+      } catch(e) {}
+    }
+
+    async function verPdfHistorial(id) {
+      const rec = await leerPdfHistorial(id);
+      if(!rec || !rec.b64) {
+        alert('El PDF de esta inspección no está guardado en este dispositivo.');
+        return;
+      }
+      const esNativo = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+      if(esNativo) {
+        try {
+          const Filesystem = Capacitor.Plugins.Filesystem || Capacitor.registerPlugin('Filesystem');
+          const escrito = await Filesystem.writeFile({ path: rec.nombre, data: rec.b64, directory: 'DOCUMENTS', recursive: true });
+          const uri = (escrito && escrito.uri) ? escrito.uri : rec.nombre;
+          const Share = Capacitor.Plugins.Share || Capacitor.registerPlugin('Share');
+          await Share.share({ title: 'Inspección OROSOL', text: rec.nombre, url: uri, dialogTitle: 'Abrir o compartir PDF' });
+        } catch(e) {
+          alert('No se pudo abrir el PDF: ' + ((e && e.message) ? e.message : e));
+        }
+      } else {
+        const bin = atob(rec.b64);
+        const arr = new Uint8Array(bin.length);
+        for(let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        const url = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }));
+        window.open(url, '_blank');
+      }
     }
 
     function borrarRegistro(id) {
       const lista = leerHistorial().filter(r => r.id !== id);
       try { localStorage.setItem(HIST_KEY, JSON.stringify(lista)); } catch(e) {}
+      borrarPdfHistorial(id);
       renderHistorial();
     }
 
     function borrarHistorial() {
       if(confirm('¿Borrar todo el historial de inspecciones?')) {
         try { localStorage.setItem(HIST_KEY, JSON.stringify([])); } catch(e) {}
+        limpiarPdfsHistorial();
         renderHistorial();
       }
     }
 
-    function registroExitoso(placa) {
-      guardarRegistro(placa);
+    function registroExitoso(placa, nombrePdf, b64) {
+      const id = guardarRegistro(placa, nombrePdf);
+      if(b64) guardarPdfHistorial(id, nombrePdf, b64);
       document.getElementById('postPdfDetalle').textContent = 'Inspección de la placa ' + placa + ' guardada en el historial.';
       document.getElementById('modalPostPdf').classList.remove('hidden');
     }
@@ -1088,8 +1184,9 @@
 
       const esNativo = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
       if(!esNativo){
+        const b64 = doc.output('datauristring').split(',')[1];
         doc.save(nombre);
-        registroExitoso(placa);
+        registroExitoso(placa, nombre, b64);
         return;
       }
 
@@ -1114,7 +1211,7 @@
         }catch(e){
           alert('PDF guardado en Documentos: ' + nombre);
         }
-        registroExitoso(placa);
+        registroExitoso(placa, nombre, base64);
       }catch(err){
         alert('No se pudo guardar el PDF: ' + ((err && err.message) ? err.message : err));
       }
