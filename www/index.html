@@ -258,12 +258,19 @@
         </button>
         <button onclick="generarPDFMultiPagina()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-3 rounded-xl shadow-lg transition-all flex items-center gap-2 text-sm">
           <i class="fa-solid fa-file-pdf text-lg"></i>
-          <span>Generar Formato</span>
+          <span>Generar PDF Formato Modificado</span>
         </button>
       </div>
     </div>
 
     </div><!-- /wizard -->
+
+    <!-- AVISO DE PROCESO (evita que la pantalla parezca colgada) -->
+    <div id="overlayProceso" class="hidden fixed inset-0 bg-slate-950/85 z-[60] flex flex-col items-center justify-center gap-3 px-8 text-center">
+      <i class="fa-solid fa-spinner fa-spin text-4xl text-amber-400"></i>
+      <p id="overlayProcesoTexto" class="text-white font-bold text-sm">Generando PDF…</p>
+      <p class="text-slate-300 text-xs">Esto tarda un momento. No cierres la aplicación.</p>
+    </div>
 
     <!-- AVISO POST-PDF -->
     <div id="modalPostPdf" class="hidden fixed inset-0 bg-slate-950/80 z-50 flex items-center justify-center p-4">
@@ -378,6 +385,13 @@
       setupCanvas('Inspector');
       mostrarPantalla('inicio');
       setupBotonAtras();
+
+      ['input', 'change'].forEach(evento => {
+        document.addEventListener(evento, (e) => {
+          if(e.target && e.target.closest && e.target.closest('#wizard')) programarBorrador();
+        });
+      });
+      ofrecerRestaurarBorrador();
     });
 
     function renderChecklist() {
@@ -431,35 +445,314 @@
             <span class="text-[10px]">Sin foto</span>
           </div>
           <div class="flex gap-2">
-            <label class="flex-1 text-center cursor-pointer bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-semibold py-1.5 px-2 rounded-lg transition-colors">
+            <button type="button" onclick="tomarFotoZona(${idx})" class="flex-1 text-center bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-semibold py-1.5 px-2 rounded-lg transition-colors">
               <i class="fa-solid fa-camera me-1"></i> Tomar foto
-              <input type="file" accept="image/*" capture="environment" class="hidden" onchange="cargarFotoZona(event, ${idx})">
-            </label>
-            <label class="flex-1 text-center cursor-pointer bg-slate-200 hover:bg-slate-300 text-slate-700 text-[11px] font-semibold py-1.5 px-2 rounded-lg transition-colors">
+            </button>
+            <button type="button" onclick="elegirFotoGaleria(${idx})" class="flex-1 text-center bg-slate-200 hover:bg-slate-300 text-slate-700 text-[11px] font-semibold py-1.5 px-2 rounded-lg transition-colors">
               <i class="fa-solid fa-image me-1"></i> Galería
-              <input type="file" accept="image/*" class="hidden" onchange="cargarFotoZona(event, ${idx})">
-            </label>
+            </button>
           </div>
+          <input id="inputFoto_${idx}" type="file" accept="image/*" class="hidden" onchange="cargarFotoZona(event, ${idx})">
         `;
         grid.appendChild(box);
       });
     }
 
-    function cargarFotoZona(event, index) {
-      const file = event.target.files[0];
-      if(!file) return;
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        fotosGuardadas[index] = e.target.result;
-        document.getElementById(`previewZone_${index}`).innerHTML = `<img src="${e.target.result}" class="w-full h-full object-cover">`;
+    // ------------------------------------------------------------------
+    // FOTOS. La cámara del teléfono entrega imágenes de 4000x3000 (5 a 8 MB).
+    // Guardar ocho de esas en memoria y volcarlas al PDF congela la aplicación
+    // y agota la RAM del dispositivo, así que cada foto se reduce apenas se toma.
+    // ------------------------------------------------------------------
+    const LADO_MAX_FOTO = 800;
+    const CALIDAD_FOTO = 0.72;
+    const LADO_MAX_CAMARA = 2000;
+    const DIR_FOTOS = 'OROSOL fotos';
+
+    let sesionFotos = Date.now();
+    const rutasFotoDisco = {};
+
+    function obtenerPlugin(nombre) {
+      if(!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform())) return null;
+      try { return Capacitor.Plugins[nombre] || Capacitor.registerPlugin(nombre); } catch(e) { return null; }
+    }
+
+    // Cede el hilo para que la pantalla pueda repintar antes de una tarea pesada.
+    function esperarFrame() {
+      return new Promise(res => requestAnimationFrame(() => setTimeout(res, 0)));
+    }
+
+    function leerArchivoComoImagen(file) {
+      return new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result);
+        reader.onerror = () => rej(reader.error || new Error('No se pudo leer el archivo.'));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function decodificarImagen(dataUrl) {
+      return new Promise((res, rej) => {
+        const img = new Image();
+        img.onload = () => res(img);
+        img.onerror = () => rej(new Error('El archivo no es una imagen válida.'));
+        img.src = dataUrl;
+      });
+    }
+
+    async function comprimirImagen(dataUrl, ladoMax = LADO_MAX_FOTO, calidad = CALIDAD_FOTO) {
+      const img = await decodificarImagen(dataUrl);
+      const lado = Math.max(img.naturalWidth || ladoMax, img.naturalHeight || ladoMax);
+      const escala = lado > ladoMax ? ladoMax / lado : 1;
+      const ancho = Math.max(1, Math.round((img.naturalWidth || ladoMax) * escala));
+      const alto = Math.max(1, Math.round((img.naturalHeight || ladoMax) * escala));
+      const cvs = document.createElement('canvas');
+      cvs.width = ancho;
+      cvs.height = alto;
+      const ctx = cvs.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, ancho, alto);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, ancho, alto);
+      const salida = cvs.toDataURL('image/jpeg', calidad);
+      img.src = '';
+      cvs.width = 0;
+      cvs.height = 0;
+      return salida.length < dataUrl.length ? salida : dataUrl;
+    }
+
+    function nombreArchivoFoto(index) {
+      const limpia = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/^[0-9.]+\s*/, '').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+      return `${DIR_FOTOS}/inspeccion_${sesionFotos}_zona${index + 1}_${limpia(zonasFotos[index]) || 'zona' + (index + 1)}.jpg`;
+    }
+
+    // Cada foto queda además escrita en el almacenamiento de la app, para que un
+    // cierre inesperado no obligue a repetir la inspección desde cero.
+    async function guardarFotoEnDisco(index, dataUrl) {
+      const fs = obtenerPlugin('Filesystem');
+      if(!fs) return;
+      const ruta = nombreArchivoFoto(index);
+      try {
+        await fs.writeFile({
+          path: ruta,
+          data: dataUrl.slice(dataUrl.indexOf(',') + 1),
+          directory: 'DOCUMENTS',
+          recursive: true
+        });
+        rutasFotoDisco[index] = ruta;
+      } catch(e) {}
+    }
+
+    async function limpiarFotosDisco() {
+      const fs = obtenerPlugin('Filesystem');
+      if(!fs) return;
+      for(const ruta of Object.values(rutasFotoDisco)) {
+        try { await fs.deleteFile({ path: ruta, directory: 'DOCUMENTS' }); } catch(e) {}
+      }
+      for(const k in rutasFotoDisco) delete rutasFotoDisco[k];
+      // Barrido de sobras de inspecciones anteriores (sesiones interrumpidas).
+      try { await fs.deleteFolder({ path: DIR_FOTOS, directory: 'DOCUMENTS', recursive: true }); } catch(e) {}
+    }
+
+    async function usarFoto(index, dataUrlOriginal) {
+      const preview = document.getElementById(`previewZone_${index}`);
+      if(preview) preview.innerHTML = '<span class="text-[10px] text-slate-500"><i class="fa-solid fa-spinner fa-spin me-1"></i>Comprimiendo foto…</span>';
+      try {
+        const comprimida = await comprimirImagen(dataUrlOriginal);
+        fotosGuardadas[index] = comprimida;
+        if(preview) preview.innerHTML = `<img src="${comprimida}" class="w-full h-full object-cover">`;
+        await guardarFotoEnDisco(index, comprimida);
+        programarBorrador();
+      } catch(e) {
+        if(preview) preview.innerHTML = '<i class="fa-solid fa-camera text-xl mb-1"></i><span class="text-[10px]">Sin foto</span>';
+        alert('No se pudo procesar la foto: ' + ((e && e.message) ? e.message : e));
+      }
+    }
+
+    // 'CAMERA' abre la cámara del sistema y guarda la toma en la galería del
+    // teléfono; 'PHOTOS' escoge una foto que ya está en la galería.
+    // Devuelve la foto o null si el usuario canceló. Si el plugin no está o
+    // falla (permiso denegado, APK antiguo) se abre el selector del sistema.
+    async function obtenerFotoConCamara(index, origen, guardarEnGaleria) {
+      const conCamara = origen === 'CAMERA';
+      const respaldo = () => activarEntradaArchivos(index, conCamara);
+      const Camera = obtenerPlugin('Camera');
+      if(!Camera) { respaldo(); return null; }
+
+      const opciones = {
+        resultType: 'dataUrl',
+        quality: 85,
+        width: LADO_MAX_CAMARA,
+        height: LADO_MAX_CAMARA,
+        correctOrientation: true,
+        allowEditing: false,
+        // Nombres del plugin en Capacitor 6
+        sourceType: origen,
+        saveToPhotoAlbum: guardarEnGaleria,
+        // Nombres del plugin en Capacitor 7/8, por si se actualiza la app
+        source: origen,
+        saveToGallery: guardarEnGaleria
       };
-      reader.readAsDataURL(file);
+      let foto;
+      try {
+        foto = await Camera.getPhoto(opciones);
+      } catch(e) {
+        if(!/cancel|dismiss/i.test(String((e && e.message) || e || ''))) respaldo();
+        return null;
+      }
+      if(!foto) { respaldo(); return null; }
+      if(foto.dataUrl) return foto.dataUrl;
+      if(foto.base64String) return 'data:image/jpeg;base64,' + foto.base64String;
+      if(foto.webPath) return foto.webPath;
+      respaldo();
+      return null;
+    }
+
+    function activarEntradaArchivos(index, conCamara) {
+      const input = document.getElementById(`inputFoto_${index}`);
+      if(!input) return;
+      if(conCamara) { input.setAttribute('capture', 'environment'); } else { input.removeAttribute('capture'); }
+      input.value = '';
+      input.click();
+    }
+
+    async function tomarFotoZona(index) {
+      const foto = await obtenerFotoConCamara(index, 'CAMERA', true);
+      if(foto) await usarFoto(index, foto);
+    }
+
+    async function elegirFotoGaleria(index) {
+      const foto = await obtenerFotoConCamara(index, 'PHOTOS', false);
+      if(foto) await usarFoto(index, foto);
+    }
+
+    async function cargarFotoZona(event, index) {
+      const file = event.target.files && event.target.files[0];
+      if(!file) return;
+      await usarFoto(index, await leerArchivoComoImagen(file));
+    }
+
+    // ------------------------------------------------------------------
+    // BORRADOR. Si la aplicación se cierra a mitad de una inspección se
+    // recuperan textos, checklist, firmas y las fotos escritas en el teléfono.
+    // ------------------------------------------------------------------
+    const BORRADOR_KEY = 'mogotax_borrador';
+    let temporizadorBorrador = null;
+
+    function programarBorrador() {
+      clearTimeout(temporizadorBorrador);
+      temporizadorBorrador = setTimeout(guardarBorrador, 600);
+    }
+
+    function pasoActual() {
+      for(let p = 4; p >= 1; p--) {
+        const el = document.getElementById('step' + p);
+        if(el && el.classList.contains('active')) return p;
+      }
+      return 1;
+    }
+
+    function borrarBorrador() {
+      clearTimeout(temporizadorBorrador);
+      try { localStorage.removeItem(BORRADOR_KEY); } catch(e) {}
+    }
+
+    function guardarBorrador() {
+      const valores = {};
+      document.querySelectorAll('#wizard input[id], #wizard textarea[id], #wizard select[id]').forEach(el => {
+        if(el.type === 'file') return;
+        valores[el.id] = el.value;
+      });
+      const selecciones = {};
+      document.querySelectorAll('#sectionsContainer select').forEach(el => { if(el.value) selecciones[el.name] = el.value; });
+      const firmas = {};
+      try {
+        if(estadoFirmas.Operador) firmas.Operador = document.getElementById('canvasOperador').toDataURL('image/jpeg', 0.6);
+        if(estadoFirmas.Inspector) firmas.Inspector = document.getElementById('canvasInspector').toDataURL('image/jpeg', 0.6);
+      } catch(e) {}
+      const rellenos = Object.entries(valores).filter(([id, v]) => id !== 'infoFecha' && id !== 'infoHora' && String(v).trim() !== '');
+      const utile = Object.keys(fotosGuardadas).length > 0 || Object.keys(selecciones).length > 0 || Object.keys(firmas).length > 0 || rellenos.length > 0;
+      if(!utile) { borrarBorrador(); return; }
+      const borrador = {
+        sesion: sesionFotos,
+        paso: pasoActual(),
+        fecha: new Date().toISOString(),
+        valores: valores,
+        selecciones: selecciones,
+        firmas: firmas,
+        fotos: Object.assign({}, rutasFotoDisco)
+      };
+      try { localStorage.setItem(BORRADOR_KEY, JSON.stringify(borrador)); } catch(e) {}
+    }
+
+    async function restaurarFirma(tipo, dataUrl) {
+      try {
+        const img = await decodificarImagen(dataUrl);
+        const cvs = document.getElementById('canvas' + tipo);
+        ctxs[tipo].drawImage(img, 0, 0, cvs.width, cvs.height);
+        img.src = '';
+        estadoFirmas[tipo] = true;
+        document.getElementById('placeholder' + tipo).classList.add('hidden');
+      } catch(e) {}
+    }
+
+    async function ofrecerRestaurarBorrador() {
+      let borrador = null;
+      try { borrador = JSON.parse(localStorage.getItem(BORRADOR_KEY) || 'null'); } catch(e) {}
+      if(!borrador) return;
+      if(Date.now() - Date.parse(borrador.fecha || 0) > 7 * 24 * 3600 * 1000) { borrarBorrador(); return; }
+
+      const placa = String((borrador.valores && borrador.valores.infoPlaca) || 'SIN PLACA').toUpperCase();
+      const cuand = borrador.fecha ? borrador.fecha.slice(0, 16).replace('T', ' ') : '';
+      if(!confirm(`Hay una inspección sin terminar (placa ${placa}, ${cuand}). ¿Quieres recuperarla?`)) {
+        borrarBorrador();
+        return;
+      }
+
+      sesionFotos = borrador.sesion || sesionFotos;
+      mostrarPantalla('wizard');
+      Object.entries(borrador.valores || {}).forEach(([id, valor]) => {
+        const el = document.getElementById(id);
+        if(el) el.value = valor;
+      });
+      renderChecklist();
+      Object.entries(borrador.selecciones || {}).forEach(([nombre, valor]) => {
+        const el = document.querySelector(`#sectionsContainer select[name="${nombre}"]`);
+        if(el) el.value = valor;
+      });
+
+      const fs = obtenerPlugin('Filesystem');
+      let fotosPerdidas = 0;
+      for(const [index, ruta] of Object.entries(borrador.fotos || {})) {
+        let recuperada = false;
+        try {
+          const leido = await fs.readFile({ path: ruta, directory: 'DOCUMENTS' });
+          if(leido && typeof leido.data === 'string' && leido.data) {
+            fotosGuardadas[Number(index)] = 'data:image/jpeg;base64,' + leido.data;
+            rutasFotoDisco[Number(index)] = ruta;
+            const preview = document.getElementById('previewZone_' + index);
+            if(preview) preview.innerHTML = `<img src="${fotosGuardadas[Number(index)]}" class="w-full h-full object-cover">`;
+            recuperada = true;
+          }
+        } catch(e) {}
+        if(!recuperada) fotosPerdidas++;
+      }
+
+      irPaso(Math.min(4, Math.max(1, Number(borrador.paso) || 1)));
+      await new Promise(res => setTimeout(res, 200));
+      for(const [tipo, dataUrl] of Object.entries(borrador.firmas || {})) {
+        await restaurarFirma(tipo, dataUrl);
+      }
+      if(fotosPerdidas > 0) {
+        alert(`${fotosPerdidas} foto(s) ya no estaban en el teléfono. Vuelve a tomarlas.`);
+      }
     }
 
     function irPaso(paso) {
       document.querySelectorAll('.step-card').forEach(el => el.classList.remove('active'));
       document.getElementById(`step${paso}`).classList.add('active');
       document.getElementById('currentStepNum').textContent = paso;
+      programarBorrador();
 
       if(paso === 4) {
         setTimeout(() => {
@@ -996,6 +1289,9 @@
     }
 
     function reiniciarFormulario() {
+      borrarBorrador();
+      limpiarFotosDisco();
+      sesionFotos = Date.now();
       document.querySelectorAll('#wizard input[type="text"], #wizard input[type="number"], #wizard textarea').forEach(el => el.value = '');
       const ahora = new Date();
       document.getElementById('infoFecha').valueAsDate = ahora;
@@ -1281,43 +1577,77 @@
         return;
       }
 
-      const doc = construirDocumentoPDF(false);
-      const placa = (document.getElementById('infoPlaca').value || 'S_N').toUpperCase();
-      const fecha = document.getElementById('infoFecha').value || 'FECHA';
-      const nombre = `Inspeccion Orosol Movil (${placa}).pdf`;
+      const overlay = document.getElementById('overlayProceso');
+      const detalleOverlay = document.getElementById('overlayProcesoTexto');
+      const mostrarProgreso = texto => {
+        if(detalleOverlay) detalleOverlay.textContent = texto;
+        if(overlay) overlay.classList.remove('hidden');
+      };
+      const ocultarProgreso = () => { if(overlay) overlay.classList.add('hidden'); };
 
+      const placa = (document.getElementById('infoPlaca').value || 'S_N').toUpperCase();
+      const nombre = `Inspeccion Orosol Movil (${placa}).pdf`;
       const esNativo = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
-      if(!esNativo){
-        const b64 = doc.output('datauristring').split(',')[1];
-        doc.save(nombre);
-        registroExitoso(placa, nombre, b64);
+
+      // El navegador tiene que pintar el aviso antes de bloquearse dibujando el
+      // documento, por eso se ceden dos cuadros de animación.
+      mostrarProgreso('Dibujando el formato…');
+      await esperarFrame();
+      await esperarFrame();
+
+      let doc = null;
+      let base64;
+      try {
+        doc = construirDocumentoPDF(false);
+        mostrarProgreso('Empaquetando el PDF…');
+        await esperarFrame();
+        const uriDatos = doc.output('datauristring');
+        base64 = uriDatos.slice(uriDatos.indexOf(',') + 1);
+      } catch(e) {
+        ocultarProgreso();
+        alert('No se pudo construir el PDF: ' + ((e && e.message) ? e.message : e));
         return;
       }
 
-      try{
-        const Filesystem = Capacitor.Plugins.Filesystem || Capacitor.registerPlugin('Filesystem');
-        const base64 = doc.output('datauristring').split(',')[1];
-        const escrito = await Filesystem.writeFile({
-          path: nombre,
-          data: base64,
-          directory: 'DOCUMENTS',
-          recursive: true
-        });
-        const uri = (escrito && escrito.uri) ? escrito.uri : nombre;
-        try{
-          const Share = Capacitor.Plugins.Share || Capacitor.registerPlugin('Share');
-          await Share.share({
-            title: 'Inspección Mogotax',
-            text: 'Inspección placa ' + placa,
-            url: uri,
-            dialogTitle: 'Guardar o compartir PDF'
-          });
-        }catch(e){
-          alert('PDF guardado en Documentos: ' + nombre);
+      const megas = (base64.length * 0.75 / 1048576).toFixed(1);
+
+      if(!esNativo) {
+        try {
+          doc.save(nombre);
+          registroExitoso(placa, nombre, base64);
+          borrarBorrador();
+        } finally {
+          ocultarProgreso();
         }
+        return;
+      }
+
+      try {
+        mostrarProgreso('Guardando el PDF en el teléfono…');
+        await esperarFrame();
+        const uri = await escribirPdfNativo(nombre, base64);
         registroExitoso(placa, nombre, base64);
-      }catch(err){
+        borrarBorrador();
+        mostrarProgreso('Abriendo el PDF…');
+        await esperarFrame();
+        let abierto = false;
+        try {
+          const FileOpener = obtenerPlugin('FileOpener');
+          await FileOpener.open({ filePath: uri, contentType: 'application/pdf' });
+          abierto = true;
+        } catch(e) { abierto = false; }
+        if(!abierto) {
+          try {
+            const Share = obtenerPlugin('Share');
+            await Share.share({ title: 'Inspección Mogotax', text: 'Inspección placa ' + placa, url: uri, dialogTitle: 'Guardar o compartir PDF' });
+          } catch(e) {}
+        }
+        document.getElementById('postPdfDetalle').textContent =
+          `Placa ${placa} · PDF de ${megas} MB guardado en Documentos del teléfono y en el historial.`;
+      } catch(err) {
         alert('No se pudo guardar el PDF: ' + ((err && err.message) ? err.message : err));
+      } finally {
+        ocultarProgreso();
       }
     }
   </script>
